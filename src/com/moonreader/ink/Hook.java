@@ -26,7 +26,9 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  *  com.flyersoft.moonreaderps  用户改包名 / 名称做出来的共存版 10.8
  *
  * 开关优先级：总开关 > 各功能开关；每个开关都是
- * 「persist 系统属性 > 模块设置页 XSharedPreferences > 默认开启」。
+ * 「persist 系统属性 > 目标 App 内嵌面板 prefs > 模块设置页 prefs > 默认开启」。
+ * 内嵌面板供 LSPatch 等无 Root 场景使用：模块 APK 未单独安装时，开关写在目标 App
+ * 自己的 SharedPreferences 里，Hook 用 XSharedPreferences 直接读该文件即可。
  * 总开关关闭时 handleLoadPackage 直接返回，一个 hook 都不注册。
  * 改动需重启对应的「静读天下」App 生效。
  */
@@ -50,12 +52,12 @@ public class Hook implements IXposedHookLoadPackage {
         final String pkg = lpparam.packageName;
         if (!TARGET_MAIN.equals(pkg) && !TARGET_COEXIST.equals(pkg)) return;
 
-        if (!featureEnabled(PROP_MASTER, KEY_MASTER)) {
+        if (!featureEnabled(PROP_MASTER, KEY_MASTER, pkg)) {
             XposedBridge.log(TAG + ": 总开关已关闭，不注册任何 hook (" + pkg + ")");
             return;
         }
 
-        if (featureEnabled(PROP_INK_THEME, KEY_INK_THEME)) {
+        if (featureEnabled(PROP_INK_THEME, KEY_INK_THEME, pkg)) {
             try {
                 EInkTheme.install(lpparam.classLoader, pkg);
             } catch (Throwable t) {
@@ -65,7 +67,7 @@ public class Hook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": 墨水屏主题已关闭 (" + pkg + ")");
         }
 
-        if (!featureEnabled(PROP_LINK_HOOK, KEY_LINK_HOOK)) {
+        if (!featureEnabled(PROP_LINK_HOOK, KEY_LINK_HOOK, pkg)) {
             XposedBridge.log(TAG + ": 链接 Hook 已关闭，跳过注册（重启静读天下生效）");
             return;
         }
@@ -92,11 +94,14 @@ public class Hook implements IXposedHookLoadPackage {
     }
 
     /**
-     * 总开关与两个功能共用的开关读取：对应的 persist 系统属性（0/1，root 下 setprop，
-     * 最可靠）优先于模块设置页的 XSharedPreferences；都读不到时默认开启，避免开关本身
-     * 出问题导致功能悄悄失效。属性：persist.moonreader.ink.master / .link_hook / .theme
+     * 总开关与两个功能共用的开关读取，优先级：
+     *  ① persist 系统属性（0/1，root 下 setprop，最可靠）
+     *  ② 目标 App 内嵌面板 prefs（无 Root / LSPatch 场景，模块 APK 未单独安装也能生效）
+     *  ③ 模块设置页 prefs（LSPosed 的 MODULE_SETTINGS 入口）
+     *  ④ 都读不到时默认开启，避免开关本身出问题导致功能悄悄失效。
+     * 属性：persist.moonreader.ink.master / .link_hook / .theme
      */
-    private static boolean featureEnabled(String prop, String prefKey) {
+    private static boolean featureEnabled(String prop, String prefKey, String pkg) {
         try {
             Class<?> sysProps = Class.forName("android.os.SystemProperties");
             String v = (String) sysProps.getMethod("get", String.class, String.class)
@@ -104,7 +109,17 @@ public class Hook implements IXposedHookLoadPackage {
             if ("0".equals(v)) return false;
             if ("1".equals(v)) return true;
         } catch (Throwable ignored) {
-            // 取不到属性就走设置页
+            // 取不到属性就往下走
+        }
+        try {
+            XSharedPreferences inApp = new XSharedPreferences(
+                    pkg, SettingsUi.IN_APP_PREFS);
+            inApp.reload();
+            if (inApp.getBoolean(SettingsUi.KEY_INIT, false)) {
+                return inApp.getBoolean(prefKey, true);
+            }
+        } catch (Throwable ignored) {
+            // 内嵌面板没用过或文件不可读，继续看模块设置页
         }
         try {
             XSharedPreferences prefs = new XSharedPreferences(MODULE, PREFS);

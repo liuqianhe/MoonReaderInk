@@ -1,7 +1,11 @@
 package com.moonreader.ink;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.Dialog;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
@@ -22,12 +26,15 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Checkable;
 import android.widget.CompoundButton;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.io.InputStream;
 import java.lang.reflect.Method;
@@ -68,10 +75,22 @@ public final class EInkTheme {
     private static volatile int ARROW2 = 0x7f08009b;
     // id/horizontalScrollView1：面包屑所在的固定容器，分割线只画在它底部
     private static volatile int FOLDERS_SCROLL = 0x7f0902c6;
+    // id/drawerBottom：侧边抽屉底部那排按钮（设置选项 / 软件说明 / 晚上模式 / 退出）
+    private static volatile int DRAWER_BOTTOM = 0x7f09020e;
+    // 这排按钮的文字用 ColorStateList 上色，App 会把扫描时改的黑字覆盖回灰色，
+    // 所以还要在 setTextColor 的 hook 里按 id 强制黑色。
+    private static volatile int DRAWER_OPT_TV = 0x7f090402;
+    private static volatile int DRAWER_ABOUT_TV = 0x7f090038;
+    private static volatile int DRAWER_DAY_TV = 0x7f0901cd;
+    private static volatile int DRAWER_EXIT_TV = 0x7f090232;
+    // id/pvTopLine：选项页 ScrollView 的内容容器，模块设置入口挂在它末尾
+    private static volatile int SETTINGS_ROOT = 0x7f0904e7;
+    private static final String ENTRY_TAG = "moonreaderink_settings_entry";
 
     private static volatile long sLastScan = 0L;
     private static volatile String sTargetPkg = "com.flyersoft.moonreaderp";
     private static volatile boolean sIdsResolved = false;
+    private static volatile boolean sDrawerLogged = false;
 
     private EInkTheme() {}
 
@@ -178,6 +197,13 @@ public final class EInkTheme {
 
         XC_MethodHook textHook = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
+                try {
+                    if (p.thisObject instanceof TextView
+                            && isDrawerBottomLabel(((TextView) p.thisObject).getId())) {
+                        p.args[0] = BLACK;
+                        return;
+                    }
+                } catch (Throwable ignored) {}
                 p.args[0] = textColor((Integer) p.args[0]);
             }
         };
@@ -186,6 +212,11 @@ public final class EInkTheme {
         XC_MethodHook textCslHook = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try {
+                    if (p.thisObject instanceof TextView
+                            && isDrawerBottomLabel(((TextView) p.thisObject).getId())) {
+                        p.args[0] = ColorStateList.valueOf(BLACK);
+                        return;
+                    }
                     ColorStateList l = (ColorStateList) p.args[0];
                     if (l != null && isChromatic(l.getDefaultColor())) {
                         p.args[0] = ColorStateList.valueOf(BLACK);
@@ -194,6 +225,25 @@ public final class EInkTheme {
             }
         };
         hook(cl, "android.widget.TextView", "setTextColor", ColorStateList.class, textCslHook);
+
+        // 抽屉底部四个文字由 XML / ColorStateList 上色，扫描时改黑可能被 App 覆盖回去；
+        // 在每次绘制之前直接把画笔设成纯黑。id 与文字内容双重判断，
+        // 兼容资源 id 重排或不同语言之外的自定义控件。
+        hook(cl, "android.widget.TextView", "onDraw", Canvas.class, new XC_MethodHook() {
+            @Override protected void beforeHookedMethod(MethodHookParam p) {
+                try {
+                    TextView t = (TextView) p.thisObject;
+                    if (isDrawerBottomLabel(t.getId()) || isDrawerBottomText(t.getText())) {
+                        t.getPaint().setColor(BLACK);
+                        if (!sDrawerLogged) {
+                            sDrawerLogged = true;
+                            XposedBridge.log(TAG + ": drawer label black: "
+                                    + t.getText() + " / " + Integer.toHexString(t.getId()));
+                        }
+                    }
+                } catch (Throwable ignored) {}
+            }
+        });
 
         XC_MethodHook iconTintHook = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
@@ -318,7 +368,7 @@ public final class EInkTheme {
     }
 
     /**
-     * 按资源名解析 4 个硬编码 id（每个目标进程只做一次）。
+     * 按资源名解析硬编码 id（每个目标进程只做一次）。
      * 原版与 Apktool M 共存版的 id 完全一致；这层兜底用于防止以后重打包导致 id 重排。
      */
     private static void resolveIds(Resources res) {
@@ -332,6 +382,12 @@ public final class EInkTheme {
                 ARROW2 = lookup(res, "arrow2", "drawable", ARROW2);
                 FOLDERS_SCROLL = lookup(res, "horizontalScrollView1", "id",
                         FOLDERS_SCROLL);
+                DRAWER_BOTTOM = lookup(res, "drawerBottom", "id", DRAWER_BOTTOM);
+                SETTINGS_ROOT = lookup(res, "pvTopLine", "id", SETTINGS_ROOT);
+                DRAWER_OPT_TV = lookup(res, "optionsTv", "id", DRAWER_OPT_TV);
+                DRAWER_ABOUT_TV = lookup(res, "aboutTv", "id", DRAWER_ABOUT_TV);
+                DRAWER_DAY_TV = lookup(res, "dayTv", "id", DRAWER_DAY_TV);
+                DRAWER_EXIT_TV = lookup(res, "exitTv", "id", DRAWER_EXIT_TV);
                 XposedBridge.log(TAG + ": ids resolved for " + sTargetPkg);
             } catch (Throwable t) {
                 XposedBridge.log(TAG + ": 资源 id 解析失败，保留默认值: " + t);
@@ -365,6 +421,14 @@ public final class EInkTheme {
             return;
         }
         if (id == FAB_ICON) { fixFabIcon(v); return; }
+        try {
+            if (id == DRAWER_BOTTOM) blackenDrawerLabels(v);
+            if (id == SETTINGS_ROOT && v instanceof ViewGroup) {
+                addSettingsEntry((ViewGroup) v);
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": entry/drawer skipped: " + t);
+        }
 
         try {
             Drawable bg = v.getBackground();
@@ -376,6 +440,7 @@ public final class EInkTheme {
                 int c = t.getCurrentTextColor();
                 int n = textColor(c);
                 if (n != c) t.setTextColor(n);
+                if (isDrawerBottomLabel(id)) t.setTextColor(BLACK);
                 for (Drawable d : t.getCompoundDrawables()) tintBlack(d);
                 for (Drawable d : t.getCompoundDrawablesRelative()) tintBlack(d);
                 // 面包屑里的小三角 / 箭头（短文本、浅灰）改成纯黑
@@ -561,6 +626,121 @@ public final class EInkTheme {
         if (bg instanceof DividerDrawable) {
             ((DividerDrawable) bg).setShowLine(false);
             v.invalidate();
+        }
+    }
+
+    private static boolean isDrawerBottomLabel(int id) {
+        return id == DRAWER_OPT_TV || id == DRAWER_ABOUT_TV
+                || id == DRAWER_DAY_TV || id == DRAWER_EXIT_TV;
+    }
+
+    private static boolean isDrawerBottomText(CharSequence cs) {
+        if (cs == null) return false;
+        String s = cs.toString().trim();
+        return s.equals("设置选项") || s.equals("软件说明")
+                || s.equals("晚上模式") || s.equals("退出");
+    }
+
+    /** 抽屉底部「设置选项 / 软件说明 / 晚上模式 / 退出」等文字改成纯黑。 */
+    private static void blackenDrawerLabels(View v) {
+        try {
+            if (!(v instanceof ViewGroup)) return;
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                View c = g.getChildAt(i);
+                if (c instanceof TextView) {
+                    ((TextView) c).setTextColor(BLACK);
+                } else if (c instanceof ViewGroup) {
+                    blackenDrawerLabels(c);
+                }
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    /**
+     * 在「选项」页内容容器（id/pvTopLine）末尾放模块设置入口。
+     * 用 post 延迟添加，避免在 applyTo 递归遍历时改动 View 树；带 tag 判重幂等。
+     */
+    private static void addSettingsEntry(final ViewGroup root) {
+        if (hasEntry(root)) return;
+        root.post(new Runnable() {
+            @Override public void run() {
+                try {
+                    if (hasEntry(root)) return;
+                    Resources res = root.getResources();
+                    TextView entry = new TextView(root.getContext());
+                    entry.setTag(ENTRY_TAG);
+                    entry.setText("墨水屏模式 · 模块设置");
+                    entry.setTextColor(BLACK);
+                    entry.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+                    entry.setGravity(Gravity.CENTER);
+                    int pad = dp(res, 16);
+                    entry.setPadding(pad, dp(res, 18), pad, dp(res, 18));
+                    GradientDrawable g = new GradientDrawable();
+                    g.setCornerRadius(dp(res, 22));
+                    g.setColor(WHITE);
+                    g.setStroke(2, BLACK);
+                    entry.setBackground(g);
+                    entry.setOnClickListener(new View.OnClickListener() {
+                        @Override public void onClick(View v) {
+                            openSettings(v.getContext());
+                        }
+                    });
+                    ViewGroup.LayoutParams lp;
+                    if (root instanceof LinearLayout) {
+                        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.MATCH_PARENT,
+                                LinearLayout.LayoutParams.WRAP_CONTENT);
+                        int m = dp(res, 22);
+                        llp.setMargins(m, dp(res, 12), m, dp(res, 32));
+                        lp = llp;
+                    } else {
+                        lp = new ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT);
+                    }
+                    root.addView(entry, lp);
+                } catch (Throwable t) {
+                    XposedBridge.log(TAG + ": 设置入口添加失败: " + t);
+                }
+            }
+        });
+    }
+
+    private static boolean hasEntry(ViewGroup root) {
+        for (int i = 0; i < root.getChildCount(); i++) {
+            if (ENTRY_TAG.equals(root.getChildAt(i).getTag())) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 优先拉起模块 APK 的设置页；LSPatch 等无 Root 场景模块 APK 未单独安装，
+     * startActivity 会抛 ActivityNotFoundException，此时在目标 App 进程里直接弹
+     * 内嵌设置面板（开关写入目标 App 自己的 prefs，Hook 可直接读）。
+     */
+    private static void openSettings(Context ctx) {
+        try {
+            Intent i = new Intent();
+            i.setClassName("com.moonreader.ink", "com.moonreader.ink.SettingsActivity");
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(i);
+            return;
+        } catch (Throwable ignored) {}
+        try {
+            SharedPreferences prefs = ctx.getSharedPreferences(
+                    SettingsUi.IN_APP_PREFS, Context.MODE_PRIVATE);
+            new AlertDialog.Builder(ctx)
+                    .setTitle("静读天下墨水屏模式")
+                    .setView(SettingsUi.build(ctx, prefs))
+                    .setPositiveButton("关闭", null)
+                    .show();
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": 内嵌设置面板失败: " + t);
+            try {
+                Toast.makeText(ctx, "模块设置不可用：请安装模块 APK 或用框架管理器进入",
+                        Toast.LENGTH_LONG).show();
+            } catch (Throwable ignored) {}
         }
     }
 
