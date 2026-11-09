@@ -35,6 +35,26 @@
   请通过 GitHub Issue 联系，将及时删除或调整。
 - 以上声明不构成法律意见；如需公开分发或用于任何非个人学习场景，请自行确认适用法律与授权。
 
+## 二次修改与风险说明
+
+- 本项目**原创代码**采用 [MIT License](LICENSE)，允许在许可范围内使用、修改与再分发；
+  该许可只覆盖原创代码，**不覆盖** Yesicon 图标素材，也不覆盖目标应用的名称、包名、
+  资源信息或任何第三方权利。本节是**免责说明**，不是对 MIT 条款的补充限制。
+- 若你基于本项目做**二次修改、重新打包、二次分发或商业化使用**（包括但不限于售卖、
+  内置到收费工具箱 / ROM、挂载广告、冒充官方版本、改名后当作自有作品发布），
+  **由此产生的一切后果由你自行承担，与原作者无关**，包括但不限于：
+  - 与静读天下（Moon+ Reader）等第三方权利人的版权、商标、使用条款纠纷；
+  - 使用者设备异常、应用无法启动、书架 / 阅读进度 / 书签 / 账号等数据丢失；
+  - Hook 兼容性导致的界面错乱、功能失效、账号异常；
+  - 任何索赔、行政处罚、法律责任或经济损失。
+- 原作者不对任何二改版本提供担保、维护、更新或技术支持，也不认可其内容与宣传。
+- 二次分发时须保留 `LICENSE` 与本仓库的版权声明，**明确标注「非官方 / 已修改」**，
+  不得暗示官方背书，不得移除模块「关于」页及本免责说明。
+- 本模块不提供破解、去广告、绕过授权或版权保护的能力；把它改造成此类用途的行为
+  与原作者无关，且可能违反适用法律与目标应用条款。
+- 以学习、研究为目的在本地修改自用不受影响；涉及公开分发或商业使用前，
+  请自行确认适用法律、第三方授权与免责范围。本说明不构成法律意见。
+
 ---
 
 ## 功能
@@ -52,8 +72,6 @@
 
 ## 环境要求与构建
 
-不依赖 Gradle、Android Studio 或网络，也不会下载任何依赖。
-
 | 依赖        | 说明                                                                                                           |
 | ----------- | -------------------------------------------------------------------------------------------------------------- |
 | Python      | 3.9+，仅标准库                                                                                                 |
@@ -68,15 +86,6 @@
 | `ANDROID_HOME` / `ANDROID_SDK_ROOT` / `MRI_ANDROID_SDK` | Android SDK 根目录                   |
 | `MRI_BUILD_TOOLS`                                           | 指定 build-tools 版本，如 `35.0.0` |
 
-也可以在仓库根目录放一个 **`local.properties`**（本机私有，已被 `.gitignore` 排除），
-写死本机路径，优先级低于环境变量：
-
-```properties
-jdk.bin=/path/to/jdk/bin
-sdk.dir=/path/to/android-sdk
-build.tools=35.0.0
-```
-
 仓库本身不含任何个人路径或凭据。
 
 ```bash
@@ -89,8 +98,6 @@ python build.py --release    # 正式版 -> out/MoonReaderInk-release.apk
 
 **签名说明**
 
-- 调试版依次尝试 `keys/debug.keystore` → `~/.android/debug.keystore` → 用 `keytool`
-  现场生成（alias `androiddebugkey`、密码 `android`），开箱即可构建。
 - 正式版需要自备 `keys/release.properties`（**不入库**）：
 
   ```properties
@@ -111,6 +118,8 @@ python build.py --release    # 正式版 -> out/MoonReaderInk-release.apk
 3. 强制停止并重新打开目标阅读器。
 4. 在模块设置页切换三个开关：可从框架管理器的「模块设置」进入，也可从目标 App
    「设置选项」页**最底部**的「墨水屏模式 · 模块设置」进入；改动需重启目标 App 生效。
+   设置页本身就是白底黑字的墨水屏样式，不需要额外配置；「关于」对话框里有可点击的
+   项目主页链接（https://github.com/liuqianhe/MoonReaderInk）。
 
 设置页里的提示是通用的 `adb shell setprop` 命令，仓库内不依赖任何外围脚本。
 有 Root 时可用系统属性强制覆盖（优先级高于两个设置面板）：
@@ -158,8 +167,8 @@ assets/xposed_init         Xposed 入口：com.moonreader.ink.Hook
 src/com/moonreader/ink/
   Hook.java                入口、总开关、链接 Hook
   EInkTheme.java           墨水屏主题的全部 Hook 与自绘 Drawable
-  SettingsActivity.java    模块 APK 的设置页（MODULE_SETTINGS 入口）
-  SettingsUi.java          设置页与无 Root 内嵌面板共用的纯代码 UI
+  SettingsActivity.java    模块 APK 的设置页（MODULE_SETTINGS 入口，白底黑字墨水屏样式）
+  SettingsUi.java          设置页与无 Root 内嵌面板共用的纯代码黑白 UI（开关 / 关于对话框）
   BookIconData.java        内嵌书本图标（Base64 PNG，来自 Yesicon）
 res/values/                应用名、模块描述、推荐作用域数组
 stubs/                    Xposed API 的编译期占位声明（非官方库）
@@ -185,6 +194,12 @@ README.md / .gitignore / .gitattributes
 - 「选项」页的模块设置入口只按 `id/pvTopLine` 精确挂载、带 tag 判重，不会重复添加；
   抽屉底部「设置选项 / 软件说明 / 晚上模式 / 退出」四个文字按 id 与文本内容双重判断，
   在 `onDraw` 之前强制纯黑（App 用 XML / ColorStateList 上色会覆盖扫描结果）。
+- 模块设置页与无 Root 内嵌面板共用 `SettingsUi.build()`，全部控件纯代码自绘黑白；
+  `SettingsActivity` 用 `Theme.Material.Light.NoActionBar` + 白底黑图标状态栏，
+  标题栏与分割线由 UI 自绘，避免系统 ActionBar 的浅灰背景和重复标题。
+- Switch 的自定义 track / thumb 用 `StateListDrawable` **不会**随 checked 状态可靠刷新，
+  改为在 `OnCheckedChangeListener` 里按状态直接换 drawable；对话框黑框要画在内容 View
+  上（设在 Window 背景上的描边会被内容盖住），并用 `setDimAmount(0f)` 去掉深灰遮罩。
 - 内嵌设置面板与模块设置页写入的是**不同**的 prefs 文件；同时用过时以系统属性优先、
   内嵌面板次之，详见上面的开关优先级。
 

@@ -730,11 +730,26 @@ public final class EInkTheme {
         try {
             SharedPreferences prefs = ctx.getSharedPreferences(
                     SettingsUi.IN_APP_PREFS, Context.MODE_PRIVATE);
-            new AlertDialog.Builder(ctx)
-                    .setTitle("静读天下墨水屏模式")
-                    .setView(SettingsUi.build(ctx, prefs))
+            // 面板整体自绘黑白，不依赖目标 App / 系统主题（标题与按钮都可能带主题色）。
+            View panel = SettingsUi.build(ctx, prefs, true);
+            GradientDrawable frame = new GradientDrawable();
+            frame.setColor(WHITE);
+            frame.setStroke(3, BLACK);
+            panel.setBackground(frame);
+            AlertDialog d = new AlertDialog.Builder(ctx)
+                    .setView(panel)
                     .setPositiveButton("关闭", null)
-                    .show();
+                    .create();
+            if (d.getWindow() != null) {
+                // 与模块设置页一致：纯白窗口、不压暗背景（墨水屏避免深色遮罩）
+                d.getWindow().setBackgroundDrawable(new ColorDrawable(WHITE));
+                d.getWindow().setDimAmount(0f);
+            }
+            d.show();
+            try {
+                TextView btn = d.getButton(AlertDialog.BUTTON_POSITIVE);
+                if (btn != null) btn.setTextColor(BLACK);
+            } catch (Throwable ignored) {}
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": 内嵌设置面板失败: " + t);
             try {
