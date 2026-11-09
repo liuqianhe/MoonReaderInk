@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.moonreader.ink"
+    android:versionCode="5"
+    android:versionName="1.4">
+
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="33" />
+
+    <application
+        android:label="@string/app_name"
+        android:allowBackup="false"
+        android:hasCode="true"
+        android:theme="@android:style/Theme.Material.Light">
+
+        <!-- LSPosed 通过 MODULE_SETTINGS 找到模块设置入口 -->
+        <activity
+            android:name=".SettingsActivity"
+            android:label="@string/app_name"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
+            </intent-filter>
+        </activity>
+
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data android:name="xposeddescription" android:value="@string/description" />
+        <meta-data android:name="xposedminversion" android:value="82" />
+        <meta-data android:name="xposedscope" android:resource="@array/scope" />
+    </application>
+</manifest>

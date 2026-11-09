@@ -1,0 +1,29 @@
+# 构建产物与中间缓存（可随时由 build.py 重建）
+out/
+work/
+*.apk
+*.ap_
+*.dex
+*.class
+*.jar
+
+# 私钥与签名配置：绝对不要提交
+keys/
+*.keystore
+*.jks
+*.p12
+*.pfx
+release.properties
+
+# 本机私有文件 / 约定文档（不随仓库分发）
+AGENTSS.md
+*.local
+local.properties
+
+# 编辑器与系统文件
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+.idea/
+.vscode/

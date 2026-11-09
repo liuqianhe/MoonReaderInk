@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="scope" translatable="false">
+        <item>com.flyersoft.moonreaderp</item>
+        <!-- Apktool M 改包名 / 名称的共存版，10.8，资源 id 与类名同原版 -->
+        <item>com.flyersoft.moonreaderps</item>
+    </string-array>
+</resources>
