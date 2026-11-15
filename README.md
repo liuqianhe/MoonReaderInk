@@ -200,6 +200,24 @@ README.md / .gitignore / .gitattributes
 - Switch 的自定义 track / thumb 用 `StateListDrawable` **不会**随 checked 状态可靠刷新，
   改为在 `OnCheckedChangeListener` 里按状态直接换 drawable；对话框黑框要画在内容 View
   上（设在 Window 背景上的描边会被内容盖住），并用 `setDimAmount(0f)` 去掉深灰遮罩。
+- 复选框（`CheckBox` / `CheckedTextView` 与系统 checkbox 资源）统一换成自绘黑白方框：
+  未选中白底纯黑边空心框，选中黑框内黑色实心方块；状态变化由 `setChecked` hook 主动重设，
+  不用 `StateListDrawable`（状态分发不可靠）。
+- 文件夹列表的橙色圆底白文件夹按资源 id 与像素特征双路径识别，改成白底纯黑矩形描边 +
+  黑色空心文件夹轮廓；位图**原地重绘像素**，绝不替换 Bitmap 对象（Fresco `inBitmap` 复用）。
+- 圆形徽标（「本地文件」下拉里的电脑 / FTP、快速访问列表里的 Dropbox / Gdrive / WebDav / FTP、
+  文件夹选择页顶部三个圆按钮、抽屉底部四个圆按钮）原来是彩色或灰色圆底 + 白色图标，
+  直接 `SRC_IN` 染黑会糊成黑圆饼；改为按位图重新生成「白底 + 黑描边 + 黑图标」的图：
+  用 36 条射线量轮廓半径判圆（齿轮 / 星星这类非圆图标跳过），圆底内与底色亮度不同或镂空的
+  像素就是图标本体，抠不出来就保持原样，避免变成空圆圈。替换时只换 ImageView 上的
+  drawable 对象，不改共享的 immutable 资源位图。
+- 书名统一压到纯黑：书架网格用 `id/myBookName`（默认 #616161），文件列表用 `id/fileName`
+  （默认 #424242），两者都按 id 在 `setTextColor` / `setTextColor(ColorStateList)` /
+  `TextView.onDraw` 三处强制黑色（日期等副标题的灰阶保持不动）。
+- 全屏对话框（「文件夹快速访问列表」「文件夹选择页」）的窗口不到状态栏，后面那层
+  `FLAG_DIM_BEHIND` 压暗会把状态栏涂成半透明黑，和黑色状态栏图标叠在一起两个都看不清：
+  在 `Dialog.show` 后清掉 `FLAG_DIM_BEHIND` 并 `setDimAmount(0f)`，同时让 Activity 窗口
+  自己把状态栏画成纯白，弹窗之外不再有灰罩。
 - 内嵌设置面板与模块设置页写入的是**不同**的 prefs 文件；同时用过时以系统属性优先、
   内嵌面板次之，详见上面的开关优先级。
 

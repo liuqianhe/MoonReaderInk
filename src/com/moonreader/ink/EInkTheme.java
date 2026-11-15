@@ -27,6 +27,8 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.Window;
+import android.view.WindowManager;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Checkable;
@@ -73,6 +75,11 @@ public final class EInkTheme {
     private static volatile int FAB_ICON = 0x7f09023b;
     // 面包屑小三角：R.drawable.arrow2 -> ActivityMain.dFolderArrow
     private static volatile int ARROW2 = 0x7f08009b;
+    // 文件夹列表橙底白文件夹图标与系统复选框资源：只解析一次 id，避免每次
+    // getDrawable 都做 getResourceEntryName 查询。
+    private static volatile int FOLDER_ICON = 0x7f0801cb;
+    private static volatile int CB_CHECK_ANIM = 0x7f080031;
+    private static volatile int CB_CHECK = 0x7f080030;
     // id/horizontalScrollView1：面包屑所在的固定容器，分割线只画在它底部
     private static volatile int FOLDERS_SCROLL = 0x7f0902c6;
     // id/drawerBottom：侧边抽屉底部那排按钮（设置选项 / 软件说明 / 晚上模式 / 退出）
@@ -83,6 +90,11 @@ public final class EInkTheme {
     private static volatile int DRAWER_ABOUT_TV = 0x7f090038;
     private static volatile int DRAWER_DAY_TV = 0x7f0901cd;
     private static volatile int DRAWER_EXIT_TV = 0x7f090232;
+    // id/fileName：书架网格与文件列表里的书名。App 默认 #424242 深灰，
+    // 在墨水屏上偏淡，统一压到纯黑（fileDate 的 #9e9e9e 日期保持不动）。
+    private static volatile int BOOK_NAME_TV = 0x7f09024d;
+    // id/myBookName：书架网格（全部书籍）里的书名，App 默认 #616161 中灰
+    private static volatile int SHELF_NAME_TV = 0x7f0903bd;
     // id/pvTopLine：选项页 ScrollView 的内容容器，模块设置入口挂在它末尾
     private static volatile int SETTINGS_ROOT = 0x7f0904e7;
     private static final String ENTRY_TAG = "moonreaderink_settings_entry";
@@ -138,6 +150,24 @@ public final class EInkTheme {
                         p.setResult(new ChevronDrawable());
                         return;
                     }
+                    // 文件夹列表的橙色圆底白文件夹：Fresco 缓存 drawable，
+                    // View 层 tint / colorFilter 都盖不住，和 arrow2 一样从资源返回处替换。
+                    if (p.thisObject instanceof Resources && p.args != null
+                            && p.args.length > 0 && p.args[0] instanceof Integer
+                            && isFolderIconRes((Resources) p.thisObject,
+                                    (Integer) p.args[0])) {
+                        p.setResult(new FolderIconDrawable());
+                        return;
+                    }
+                    // 系统复选框资源：换成按状态切换的黑白方框 drawable，
+                    // 覆盖 ImageView / 自定义 View 那种不走 CompoundButton 的情况。
+                    if (p.thisObject instanceof Resources && p.args != null
+                            && p.args.length > 0 && p.args[0] instanceof Integer
+                            && isCheckBoxRes((Resources) p.thisObject,
+                                    (Integer) p.args[0])) {
+                        p.setResult(checkBoxStates());
+                        return;
+                    }
                     Object r = p.getResult();
                     if (r instanceof ColorDrawable) {
                         int c = ((ColorDrawable) r).getColor();
@@ -157,7 +187,11 @@ public final class EInkTheme {
             @Override protected void afterHookedMethod(MethodHookParam p) {
                 try {
                     Bitmap b = (Bitmap) p.getResult();
-                    if (b != null && looksLikeBlueBadge(b)) recolorInPlace(b);
+                    if (b == null) return;
+                    // 橙底白文件夹：Fresco 用 inBitmap 复用，绝不替换 Bitmap 对象，
+                    // 只把像素原地重绘成「白底黑矩形边框 + 空心文件夹」。
+                    if (looksLikeOrangeFolder(b)) { redrawFolderInPlace(b); return; }
+                    if (looksLikeBlueBadge(b)) recolorInPlace(b);
                 } catch (Throwable ignored) {}
             }
         };
@@ -199,7 +233,7 @@ public final class EInkTheme {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try {
                     if (p.thisObject instanceof TextView
-                            && isDrawerBottomLabel(((TextView) p.thisObject).getId())) {
+                            && isForceBlackLabel(((TextView) p.thisObject).getId())) {
                         p.args[0] = BLACK;
                         return;
                     }
@@ -213,7 +247,7 @@ public final class EInkTheme {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try {
                     if (p.thisObject instanceof TextView
-                            && isDrawerBottomLabel(((TextView) p.thisObject).getId())) {
+                            && isForceBlackLabel(((TextView) p.thisObject).getId())) {
                         p.args[0] = ColorStateList.valueOf(BLACK);
                         return;
                     }
@@ -233,7 +267,7 @@ public final class EInkTheme {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try {
                     TextView t = (TextView) p.thisObject;
-                    if (isDrawerBottomLabel(t.getId()) || isDrawerBottomText(t.getText())) {
+                    if (isForceBlackLabel(t.getId()) || isDrawerBottomText(t.getText())) {
                         t.getPaint().setColor(BLACK);
                         if (!sDrawerLogged) {
                             sDrawerLogged = true;
@@ -315,6 +349,29 @@ public final class EInkTheme {
             tryHook(cl, cls, "setThumbTintList", ColorStateList.class, swTintHook);
         }
 
+        // CheckBox / CheckedTextView：App 每次改状态或上色都强制刷成黑白 drawable，
+        // 否则系统默认灰框与彩色/白色勾在墨水屏上几乎看不见。
+        final XC_MethodHook checkedHook = new XC_MethodHook() {
+            @Override protected void afterHookedMethod(MethodHookParam p) {
+                try {
+                    View v = (View) p.thisObject;
+                    if (v instanceof CompoundButton) fixCheckBox((CompoundButton) v);
+                    else fixCheckedTextView(v);
+                } catch (Throwable ignored) {}
+            }
+        };
+        hook(cl, "android.widget.CompoundButton", "setChecked", boolean.class, checkedHook);
+        tryHook(cl, "android.widget.CheckedTextView", "setChecked", boolean.class, checkedHook);
+        tryHook(cl, "android.widget.CompoundButton", "setButtonTintList",
+                ColorStateList.class, new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam p) {
+                        try {
+                            CompoundButton b = (CompoundButton) p.thisObject;
+                            if (b.getClass().getName().contains("CheckBox")) p.args[0] = null;
+                        } catch (Throwable ignored) {}
+                    }
+                });
+
         // ---- 3. 状态栏
         hook(cl, "android.view.View", "setSystemUiVisibility", int.class, new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
@@ -331,7 +388,21 @@ public final class EInkTheme {
         hook(cl, "android.app.Activity", "onResume", new XC_MethodHook() {
             @Override protected void afterHookedMethod(final MethodHookParam p) {
                 try {
-                    final View decor = ((Activity) p.thisObject).getWindow().getDecorView();
+                    final Activity act = (Activity) p.thisObject;
+                    final View decor = act.getWindow().getDecorView();
+                    // 有些页面（文件夹快速访问列表等）是「对话框式 Activity」：窗口不到
+                    // 状态栏，状态栏位置显示的是被 FLAG_DIM_BEHIND 压暗的背景，加上黑色
+                    // 状态栏图标就成了「一层透明黑」。这里去掉压暗、并让窗口自己把状态栏
+                    // 画成纯白，图标才看得清。
+                    try {
+                        final Window win = act.getWindow();
+                        WindowManager.LayoutParams lp = win.getAttributes();
+                        if ((lp.flags & WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0) {
+                            win.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+                        }
+                        win.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+                        win.setStatusBarColor(WHITE);
+                    } catch (Throwable ignored) {}
                     decor.post(new Runnable() {
                         @Override public void run() { scan(decor); }
                     });
@@ -341,13 +412,44 @@ public final class EInkTheme {
         hook(cl, "android.app.Dialog", "show", new XC_MethodHook() {
             @Override protected void afterHookedMethod(final MethodHookParam p) {
                 try {
-                    final View decor = ((Dialog) p.thisObject).getWindow().getDecorView();
+                    final Dialog dlg = (Dialog) p.thisObject;
+                    final View decor = dlg.getWindow().getDecorView();
+                    // 全屏对话框（文件夹快速访问列表 / 文件夹选择页）的窗口不到状态栏，
+                    // 后面那层 FLAG_DIM_BEHIND 压暗会把状态栏也涂成半透明黑，和黑色
+                    // 状态栏图标叠在一起看不清。直接去掉压暗：对话框本身已有白底黑框。
+                    try {
+                        final Window dw = dlg.getWindow();
+                        if ((dw.getAttributes().flags
+                                & WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0) {
+                            dw.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+                        }
+                        dw.setDimAmount(0f);
+                    } catch (Throwable ignored) {}
                     decor.post(new Runnable() {
                         @Override public void run() { scan(decor); }
                     });
                 } catch (Throwable ignored) {}
             }
         });
+        // 顶部「本地文件」下拉是 PopupWindow，不是 Dialog，Dialog.show 的扫描够不到它。
+        final XC_MethodHook popupHook = new XC_MethodHook() {
+            @Override protected void afterHookedMethod(final MethodHookParam p) {
+                try {
+                    final View cv = ((android.widget.PopupWindow) p.thisObject).getContentView();
+                    if (cv == null) return;
+                    cv.postDelayed(new Runnable() {
+                        @Override public void run() { scan(cv.getRootView()); }
+                    }, 120);
+                } catch (Throwable ignored) {}
+            }
+        };
+        tryHook(cl, "android.widget.PopupWindow", "showAtLocation",
+                View.class, int.class, int.class, int.class, popupHook);
+        tryHook(cl, "android.widget.PopupWindow", "showAsDropDown", View.class, popupHook);
+        tryHook(cl, "android.widget.PopupWindow", "showAsDropDown",
+                View.class, int.class, int.class, popupHook);
+        tryHook(cl, "android.widget.PopupWindow", "showAsDropDown",
+                View.class, int.class, int.class, int.class, popupHook);
         // 设置页是 ActivityMain 内部视图切换（不触发 onResume），
         // 靠 View 附着到窗口时补一次扫描；250ms 节流避免反复遍历。
         hook(cl, "android.view.View", "onAttachedToWindow", new XC_MethodHook() {
@@ -388,6 +490,13 @@ public final class EInkTheme {
                 DRAWER_ABOUT_TV = lookup(res, "aboutTv", "id", DRAWER_ABOUT_TV);
                 DRAWER_DAY_TV = lookup(res, "dayTv", "id", DRAWER_DAY_TV);
                 DRAWER_EXIT_TV = lookup(res, "exitTv", "id", DRAWER_EXIT_TV);
+                BOOK_NAME_TV = lookup(res, "fileName", "id", BOOK_NAME_TV);
+                SHELF_NAME_TV = lookup(res, "myBookName", "id", SHELF_NAME_TV);
+                FOLDER_ICON = lookup(res, "iconfolder", "drawable", FOLDER_ICON);
+                CB_CHECK_ANIM = lookup(res, "abc_btn_check_material_anim",
+                        "drawable", CB_CHECK_ANIM);
+                CB_CHECK = lookup(res, "abc_btn_check_material",
+                        "drawable", CB_CHECK);
                 XposedBridge.log(TAG + ": ids resolved for " + sTargetPkg);
             } catch (Throwable t) {
                 XposedBridge.log(TAG + ": 资源 id 解析失败，保留默认值: " + t);
@@ -440,7 +549,7 @@ public final class EInkTheme {
                 int c = t.getCurrentTextColor();
                 int n = textColor(c);
                 if (n != c) t.setTextColor(n);
-                if (isDrawerBottomLabel(id)) t.setTextColor(BLACK);
+                if (isForceBlackLabel(id)) t.setTextColor(BLACK);
                 for (Drawable d : t.getCompoundDrawables()) tintBlack(d);
                 for (Drawable d : t.getCompoundDrawablesRelative()) tintBlack(d);
                 // 面包屑里的小三角 / 箭头（短文本、浅灰）改成纯黑
@@ -456,7 +565,9 @@ public final class EInkTheme {
             if (v instanceof CompoundButton) {
                 fixSwitch((CompoundButton) v);
                 fixRadio((CompoundButton) v);
+                fixCheckBox((CompoundButton) v);
             }
+            fixCheckedTextView(v);
             fixMaterialButton(v);
             if (v instanceof ImageView) fixImageView((ImageView) v);
             maybeDivider(v);
@@ -470,7 +581,116 @@ public final class EInkTheme {
         }
     }
 
-    /** 悬浮按钮：白圆 + 粗黑边 + 黑色书本，全部画在同一个 drawable 里。 */
+    /**
+     * 圆形徽标 → 「白底 + 黑描边 + 黑图标」的新 Bitmap；不是圆形徽标就返回 null。
+     *
+     * 判定用 36 条射线量轮廓半径：齿轮 / 星星 / 方块这类带齿或非圆的图标半径波动大，
+     * 一律跳过，避免把本来就正常的线框图标改成圆圈。另外要求四角透明，
+     * 圆底不能是纯黑（黑底黑字的图标保持原样）。
+     * 圆底内与底色亮度不同的像素、以及圆底里镂空的像素都算图标本体，画成黑色。
+     */
+    private static Bitmap badgeOutline(Bitmap src) {
+        try {
+            int w = src.getWidth(), h = src.getHeight();
+            if (w < 32 || h < 32 || w > 640 || h > 640) return null;
+            if (Math.abs(w - h) > Math.min(w, h) / 8) return null;
+            int[] px = new int[w * h];
+            src.getPixels(px, 0, w, 0, 0, w, h);
+            // 四角必须透明：矩形图标 / 书籍封面直接排除
+            if (Color.alpha(px[2 * w + 2]) > 40 || Color.alpha(px[2 * w + w - 3]) > 40
+                    || Color.alpha(px[(h - 3) * w + 2]) > 40
+                    || Color.alpha(px[(h - 3) * w + w - 3]) > 40) return null;
+
+            int cx = w / 2, cy = h / 2;
+            float limit = Math.min(w, h) / 2f - 1f;
+            float rMin = limit, rMax = 0f;
+            for (int i = 0; i < 36; i++) {
+                double ang = Math.PI * 2 * i / 36;
+                float found = 0f;
+                for (float t = limit; t > limit * 0.35f; t -= 1f) {
+                    int x = Math.round(cx + (float) Math.cos(ang) * t);
+                    int y = Math.round(cy + (float) Math.sin(ang) * t);
+                    if (x < 0 || y < 0 || x >= w || y >= h) continue;
+                    if (Color.alpha(px[y * w + x]) > 60) { found = t; break; }
+                }
+                if (found <= 0f) return null;
+                rMin = Math.min(rMin, found);
+                rMax = Math.max(rMax, found);
+            }
+            if (rMax - rMin > rMax * 0.10f) return null;   // 不是圆
+            float R = (rMin + rMax) / 2f;
+
+            // 圆底主色：0.68R 环带上的 72 点平均
+            int sr = 0, sg = 0, sb = 0, cnt = 0;
+            for (int i = 0; i < 72; i++) {
+                double ang = Math.PI * 2 * i / 72;
+                int x = Math.round(cx + (float) Math.cos(ang) * R * 0.68f);
+                int y = Math.round(cy + (float) Math.sin(ang) * R * 0.68f);
+                if (x < 0 || y < 0 || x >= w || y >= h) continue;
+                int c = px[y * w + x];
+                if (Color.alpha(c) < 100) continue;
+                sr += Color.red(c);
+                sg += Color.green(c);
+                sb += Color.blue(c);
+                cnt++;
+            }
+            if (cnt < 12) return null;
+            int ground = Color.argb(255, sr / cnt, sg / cnt, sb / cnt);
+            int gl = lum(ground);
+            // 只处理彩色圆底或浅色圆底；纯深色圆底（本来就在墨水屏上可见）不动
+            if (!isChromatic(ground) && gl < 60) return null;
+
+            int[] out = new int[w * h];
+            float ring = Math.max(2f, R * 0.10f);
+            int glyph = 0;
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    int i = y * w + x;
+                    float dx = x + 0.5f - cx, dy = y + 0.5f - cy;
+                    float dist = (float) Math.sqrt(dx * dx + dy * dy);
+                    if (dist > R) { out[i] = 0; continue; }
+                    if (dist > R - ring) { out[i] = BLACK; continue; }
+                    int c = px[i];
+                    int a = Color.alpha(c);
+                    int l = lum(c);
+                    // 图标本体三种来源都算：
+                    // ① 圆底上的浅色图标（彩色圆底 + 白色图标）
+                    // ② 圆底上的深色图标（浅色圆底 + 深色线条图标）
+                    // ③ 圆底里抠空的图标（白色圆底 + 透明镂空字形，App 再整体上色）
+                    if (a < 90 || l > gl + 28 || l < gl - 28) {
+                        out[i] = BLACK;
+                        glyph++;
+                    } else {
+                        out[i] = WHITE;
+                    }
+                }
+            }
+            // 图标本体至少要占圆底的 2%，否则说明抠不出图标（会变成空圆圈），保持原样
+            if (glyph * 50 < (int) (Math.PI * R * R)) return null;
+            Bitmap nb = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            nb.setPixels(out, 0, w, 0, 0, w, h);
+            logOnce("badge", w + "x" + h + " ground=" + Integer.toHexString(ground)
+                    + " glyph=" + (glyph * 100 / (int) (Math.PI * R * R)) + "%");
+            return nb;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 圆形徽标的替换 drawable：保留原位图的自适应尺寸，只换绘制内容。 */
+    private static class BadgeOutlineDrawable extends BitmapDrawable {
+        private final int w, h;
+
+        BadgeOutlineDrawable(Resources res, Bitmap b, int w, int h) {
+            super(res, b);
+            this.w = w;
+            this.h = h;
+        }
+
+        @Override public int getIntrinsicWidth() { return w; }
+        @Override public int getIntrinsicHeight() { return h; }
+    }
+
     private static void fixFabIcon(View v) {
         if (!(v instanceof ImageView)) return;
         ImageView iv = (ImageView) v;
@@ -483,9 +703,33 @@ public final class EInkTheme {
     private static void fixImageView(ImageView iv) {
         if (isFab(iv)) return;
         Drawable d = iv.getDrawable();
+        if (d == null) return;
+        if (d instanceof BadgeOutlineDrawable) {
+            iv.setColorFilter(null);
+            return;
+        }
         if (d instanceof BitmapDrawable) {
             Bitmap b = ((BitmapDrawable) d).getBitmap();
-            if (b != null && looksLikeBlueBadge(b)) {
+            // 圆形徽标（「本地文件」下拉里的 电脑 / FTP、快速访问列表里的
+            // Dropbox / Gdrive / WebDav / FTP、文件夹选择页顶部那三个圆按钮）
+            // 原来是「彩色或浅色圆底 + 白色图标」，SRC_IN 染黑后整块糊成黑圆饼。
+            // 统一改画成「白底 + 黑描边 + 黑图标」，只换 ImageView 上的 drawable 对象，
+            // 不改位图本身（资源位图是共享且 immutable 的）。
+            if (b != null && iv.getWidth() <= 130 && iv.getHeight() <= 130
+                    && !isCoverClass(iv)
+                    && (iv.getWidth() > 0 ? true : d.getIntrinsicWidth() <= 300)) {
+                Bitmap outline = badgeOutline(b);
+                if (outline != null) {
+                    iv.setColorFilter(null);
+                    iv.setImageTintList(null);
+                    iv.setImageDrawable(new BadgeOutlineDrawable(iv.getResources(), outline,
+                            d.getIntrinsicWidth(), d.getIntrinsicHeight()));
+                    return;
+                }
+            }
+            // 大图 / 封面路径：仍按像素原地改色（Fresco 复用 inBitmap，绝不换对象）。
+            // immutable 位图不能原地改，直接跳过，别把异常抛到扫描日志里。
+            if (b != null && b.isMutable() && looksLikeBlueBadge(b)) {
                 recolorInPlace(b);
                 iv.setColorFilter(null);
                 return;
@@ -584,6 +828,69 @@ public final class EInkTheme {
         } catch (Throwable ignored) {}
     }
 
+    /**
+     * CheckBox（自定义阅读器工具栏等）：默认灰框 + 彩色/白色勾，墨水屏上糊成一片。
+     * 换成自绘黑白 drawable：未选中白底纯黑边空心框，选中黑框内铺一个黑色小方块。
+     * 不用 StateListDrawable：实测自定义 track/thumb 的状态分发不可靠，
+     * 状态变化由 setChecked hook 主动重设最稳。
+     */
+    private static void fixCheckBox(CompoundButton b) {
+        if (!b.getClass().getName().contains("CheckBox")) return;
+        try {
+            b.setButtonTintList(null);
+            Drawable old = b.getButtonDrawable();
+            if (!(old instanceof CheckBoxDrawable)
+                    || ((CheckBoxDrawable) old).checked != b.isChecked()) {
+                b.setButtonDrawable(new CheckBoxDrawable(b.isChecked()));
+            }
+            logOnce("checkbox", b.getClass().getName());
+        } catch (Throwable ignored) {}
+    }
+
+    /** 多选列表里用 CheckedTextView 的情况：checkMark 同样换成黑白方框。 */
+    private static void fixCheckedTextView(View v) {
+        if (!(v instanceof android.widget.CheckedTextView)) return;
+        try {
+            android.widget.CheckedTextView t = (android.widget.CheckedTextView) v;
+            Drawable old = t.getCheckMarkDrawable();
+            if (!(old instanceof CheckBoxDrawable)
+                    || ((CheckBoxDrawable) old).checked != t.isChecked()) {
+                t.setCheckMarkDrawable(new CheckBoxDrawable(t.isChecked()));
+            }
+            logOnce("checkedTextView", v.getClass().getName());
+        } catch (Throwable ignored) {}
+    }
+
+    private static volatile boolean sLoggedCheckbox = false;
+    private static volatile boolean sLoggedFolder = false;
+    private static volatile boolean sLoggedBadge = false;
+
+    private static void logOnce(String kind, String detail) {
+        if ("folder".equals(kind)) {
+            if (sLoggedFolder) return;
+            sLoggedFolder = true;
+        } else if ("badge".equals(kind)) {
+            if (sLoggedBadge) return;
+            sLoggedBadge = true;
+        } else {
+            if (sLoggedCheckbox) return;
+            sLoggedCheckbox = true;
+        }
+        XposedBridge.log(TAG + ": " + kind + " fixed -> " + detail);
+    }
+
+    private static Drawable checkBoxStates() {
+        StateListDrawable s = new StateListDrawable();
+        s.addState(new int[]{android.R.attr.state_checked}, new CheckBoxDrawable(true));
+        s.addState(new int[]{}, new CheckBoxDrawable(false));
+        return s;
+    }
+
+    // drawableHook 开头已解析过 id，这里不再调用 resolveIds，避免重入。
+    private static boolean isCheckBoxRes(Resources res, int id) {
+        return id == CB_CHECK_ANIM || id == CB_CHECK;
+    }
+
     /** 面包屑区域（屏幕上方、矮条状）：淡灰 -> 纯黑，白底仍白、黑字仍黑。
      *  用高对比 ColorMatrix 而不是 SRC_IN，避免把白底整块染黑。 */
     private static void blackenSmallTopView(View v) {
@@ -627,6 +934,11 @@ public final class EInkTheme {
             ((DividerDrawable) bg).setShowLine(false);
             v.invalidate();
         }
+    }
+
+    /** 一律强制纯黑的文字：抽屉底部四个标签 + 书架/文件列表的书名。 */
+    private static boolean isForceBlackLabel(int id) {
+        return isDrawerBottomLabel(id) || id == BOOK_NAME_TV || id == SHELF_NAME_TV;
     }
 
     private static boolean isDrawerBottomLabel(int id) {
@@ -800,11 +1112,17 @@ public final class EInkTheme {
     }
 
     private static boolean isCoverView(View v) {
-        String n = v.getClass().getName();
-        if (n.contains("Shelf") || n.contains("Cover") || n.contains("BookImage")
-                || n.contains("Drawee") || n.contains("Photo")) return true;
+        if (isCoverClass(v)) return true;
         Drawable d = ((ImageView) v).getDrawable();
         return d != null && (d.getIntrinsicWidth() > 400 || d.getIntrinsicHeight() > 400);
+    }
+
+    /** 只看 View 类型：Shelf / Drawee 这类才是真封面；徽标图标虽然位图 512x512，
+     *  但显示尺寸只有 64~108，不能按 intrinsic 判封面，否则会被漏掉。 */
+    private static boolean isCoverClass(View v) {
+        String n = v.getClass().getName();
+        return n.contains("Shelf") || n.contains("Cover") || n.contains("BookImage")
+                || n.contains("Drawee") || n.contains("Photo");
     }
 
     private static boolean looksLikeBlueBadge(Bitmap b) {
@@ -842,6 +1160,71 @@ public final class EInkTheme {
             }
         }
         b.setPixels(px, 0, w, 0, 0, w, h);
+    }
+
+    // 同上：id 已由 drawableHook 开头的 resolveIds 解析。
+    private static boolean isFolderIconRes(Resources res, int id) {
+        return id == FOLDER_ICON;
+    }
+
+    /** 橙底白文件夹：高橙占比 + 明显白色区域 + 近方形小图，避免误伤书籍真实封面。 */
+    private static boolean looksLikeOrangeFolder(Bitmap b) {
+        int w = b.getWidth(), h = b.getHeight();
+        if (w <= 0 || h <= 0 || w > 200 || h > 200) return false;
+        if (Math.abs(w - h) > Math.min(w, h) / 3) return false;
+        int step = Math.max(1, Math.min(w, h) / 20);
+        int orange = 0, light = 0, total = 0;
+        for (int y = 0; y < h; y += step) {
+            for (int x = 0; x < w; x += step) {
+                int c = b.getPixel(x, y);
+                if (Color.alpha(c) < 8) continue;
+                total++;
+                int r = Color.red(c), g = Color.green(c), bl = Color.blue(c);
+                if (r > 190 && g > 90 && g < 210 && bl < 120 && r - g > 40) orange++;
+                else if (lum(c) > 215) light++;
+            }
+        }
+        return total > 0 && orange * 100 / total > 40 && light * 100 / total > 6;
+    }
+
+    /** 原地重绘位图：对象不变（Fresco inBitmap 复用安全），只换像素内容。 */
+    private static void redrawFolderInPlace(Bitmap b) {
+        try {
+            Canvas c = new Canvas(b);
+            b.eraseColor(WHITE);
+            drawFolderIcon(c, new Rect(0, 0, b.getWidth(), b.getHeight()));
+            logOnce("folder", "Bitmap " + b.getWidth() + "x" + b.getHeight());
+        } catch (Throwable ignored) {}
+    }
+
+    /** 白底 + 纯黑矩形描边 + 黑色空心（仅描边）文件夹轮廓。 */
+    private static void drawFolderIcon(Canvas c, Rect r) {
+        float w = r.width(), h = r.height();
+        float sw = Math.max(2f, Math.min(w, h) * 0.055f);
+        Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        fill.setColor(WHITE);
+        fill.setStyle(Paint.Style.FILL);
+        Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+        stroke.setColor(BLACK);
+        stroke.setStyle(Paint.Style.STROKE);
+        stroke.setStrokeWidth(sw);
+        stroke.setStrokeJoin(Paint.Join.ROUND);
+        float ins = sw;
+        c.drawRect(r.left + ins, r.top + ins, r.right - ins, r.bottom - ins, fill);
+        c.drawRect(r.left + ins, r.top + ins, r.right - ins, r.bottom - ins, stroke);
+        float l = r.left + w * 0.24f, rr = r.right - w * 0.24f;
+        float t = r.top + h * 0.32f, bot = r.bottom - h * 0.32f;
+        float tabW = w * 0.28f, tabH = h * 0.11f;
+        android.graphics.Path p = new android.graphics.Path();
+        p.moveTo(l, t + tabH);
+        p.lineTo(l, bot);
+        p.lineTo(rr, bot);
+        p.lineTo(rr, t + tabH);
+        p.lineTo(l + tabW, t + tabH);
+        p.lineTo(l + tabW, t);
+        p.lineTo(l, t);
+        p.close();
+        c.drawPath(p, stroke);
     }
 
     private static boolean isChromatic(int c) {
@@ -962,6 +1345,72 @@ public final class EInkTheme {
         @Override public void setAlpha(int a) {}
         @Override public void setColorFilter(ColorFilter cf) {}
         @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+    }
+
+    /** CheckBox：未选中白底纯黑边空心方框；选中黑框内基本铺满黑色小方块。 */
+    private static class CheckBoxDrawable extends Drawable {
+        final boolean checked;
+        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint dot = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        CheckBoxDrawable(boolean checked) {
+            this.checked = checked;
+            fill.setColor(WHITE);
+            fill.setStyle(Paint.Style.FILL);
+            stroke.setColor(BLACK);
+            stroke.setStyle(Paint.Style.STROKE);
+            dot.setColor(BLACK);
+            dot.setStyle(Paint.Style.FILL);
+        }
+
+        @Override public void draw(Canvas c) {
+            Rect r = getBounds();
+            float w = r.width(), h = r.height();
+            float sw = Math.max(2f, Math.min(w, h) * 0.09f);
+            stroke.setStrokeWidth(sw);
+            float ins = Math.max(sw, Math.min(w, h) * 0.12f);
+            // 列表末项的 drawable 底部会被父容器裁剪：把方框收进 Canvas 实际
+            // 可见区域内，保证四条边都完整；其它行 clip 足够大，外观不变。
+            float l = r.left + ins, t = r.top + ins;
+            float rr = r.right - ins, b = r.bottom - ins;
+            Rect clip = c.getClipBounds();
+            if (clip != null) {
+                l = Math.max(l, clip.left + ins);
+                t = Math.max(t, clip.top + ins);
+                rr = Math.min(rr, clip.right - ins);
+                b = Math.min(b, clip.bottom - ins);
+            }
+            if (rr <= l || b <= t) return;
+            float size = Math.min(rr - l, b - t);
+            rr = l + size;
+            b = t + size;
+            c.drawRect(l, t, rr, b, fill);
+            c.drawRect(l, t, rr, b, stroke);
+            if (checked) {
+                float p = size * 0.22f;
+                c.drawRect(l + p, t + p, rr - p, b - p, dot);
+            }
+        }
+
+        @Override public int getIntrinsicWidth() { return 60; }
+        @Override public int getIntrinsicHeight() { return 48; }
+        @Override public void setAlpha(int a) {}
+        @Override public void setColorFilter(ColorFilter cf) {}
+        @Override public int getOpacity() { return PixelFormat.OPAQUE; }
+    }
+
+    /** 文件夹图标：白底 + 纯黑矩形描边 + 空心文件夹（bounds 由 App setBounds 提供）。 */
+    private static class FolderIconDrawable extends Drawable {
+        @Override public void draw(Canvas c) {
+            drawFolderIcon(c, getBounds());
+            logOnce("folder", "FolderIconDrawable");
+        }
+        @Override public int getIntrinsicWidth() { return 96; }
+        @Override public int getIntrinsicHeight() { return 96; }
+        @Override public void setAlpha(int a) {}
+        @Override public void setColorFilter(ColorFilter cf) {}
+        @Override public int getOpacity() { return PixelFormat.OPAQUE; }
     }
 
     /** 顶部栏白底 + 底部黑线；showLine=false 时只留白底（用于清理误加的分割线）。 */

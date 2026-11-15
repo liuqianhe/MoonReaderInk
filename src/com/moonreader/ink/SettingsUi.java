@@ -46,8 +46,8 @@ public final class SettingsUi {
     public static final String MODULE_NAME = "静读天下墨水屏模式";
     public static final String MODULE_PACKAGE = "com.moonreader.ink";
     /** 兜底版本号，需与 AndroidManifest.xml 同步；模块 APK 已安装时优先读 PackageInfo。 */
-    public static final String FALLBACK_VERSION = "1.6";
-    public static final int FALLBACK_VERSION_CODE = 7;
+    public static final String FALLBACK_VERSION = "1.7";
+    public static final int FALLBACK_VERSION_CODE = 8;
     /** 关于页可点击跳转的项目主页（公开仓库）。 */
     public static final String REPO_URL = "https://github.com/liuqianhe/MoonReaderInk";
 
