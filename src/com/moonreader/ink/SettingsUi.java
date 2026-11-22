@@ -40,14 +40,16 @@ public final class SettingsUi {
     public static final String KEY_MASTER = "master";
     public static final String KEY_LINK_HOOK = "link_hook";
     public static final String KEY_INK_THEME = "ink_theme";
+    /** 全局功能：屏蔽系统字体（不受目标包名 / 墨水屏主题限制）。 */
+    public static final String KEY_BLOCK_FONT = "block_font";
     /** 内嵌面板写过开关的标记，用于区分「没设置过」与「设成了默认值」。 */
     public static final String KEY_INIT = "__initialized";
 
     public static final String MODULE_NAME = "静读天下墨水屏模式";
     public static final String MODULE_PACKAGE = "com.moonreader.ink";
     /** 兜底版本号，需与 AndroidManifest.xml 同步；模块 APK 已安装时优先读 PackageInfo。 */
-    public static final String FALLBACK_VERSION = "1.7";
-    public static final int FALLBACK_VERSION_CODE = 8;
+    public static final String FALLBACK_VERSION = "1.8";
+    public static final int FALLBACK_VERSION_CODE = 9;
     /** 关于页可点击跳转的项目主页（公开仓库）。 */
     public static final String REPO_URL = "https://github.com/liuqianhe/MoonReaderInk";
 
@@ -101,13 +103,14 @@ public final class SettingsUi {
         addSwitch(ctx, body, prefs, KEY_MASTER, "总开关（关闭后所有功能停用）");
         addSwitch(ctx, body, prefs, KEY_LINK_HOOK, "链接 Hook（注释弹窗链接改色 / 去下划线）");
         addSwitch(ctx, body, prefs, KEY_INK_THEME, "墨水屏主题（白底黑字，去掉蓝色 UI）");
+        addSwitch(ctx, body, prefs, KEY_BLOCK_FONT, "屏蔽系统字体（全局：字体列表只留自建字体）");
 
         TextView hint = new TextView(ctx);
         hint.setText("改动在重启「静读天下」后生效。\n"
                 + "无 Root 设备（LSPatch 等）可直接使用本页开关；\n"
                 + "有 Root 时也能用系统属性强制覆盖：\n"
                 + "adb shell setprop persist.moonreader.ink.master 0\n"
-                + "属性：master / link_hook / theme，0 关 1 开");
+                + "属性：master / link_hook / theme / block_font，0 关 1 开");
         hint.setTextColor(BLACK);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(

@@ -63,10 +63,11 @@
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | 链接 Hook    | 把 EPUB 注释弹窗里 `Html.fromHtml()` 生成的原生 `URLSpan` 换成自定义 Span，跟随 App 自身的「链接颜色」并去掉下划线，保留点击            |
 | 墨水屏主题   | 彩色 / 灰阶背景转纯白、文字与图标转黑，状态栏改白底黑图标，顶部加黑色分割线，开关 / 单选 / 分段按钮换成黑白样式，蓝色默认封面与悬浮按钮重绘 |
-| 总开关       | 一键停用上面两个功能；关闭后模块一个 hook 都不注册                                                                                          |
+| 屏蔽系统字体 | 全局功能：字体列表只留用户目录里的 ttf/otf，隐藏 sans-serif / Calluna 等系统内置字体；不受目标包名 / 主题限制 |
+| 总开关       | 一键停用上面所有功能；关闭后模块一个 hook 都不注册                                                                                          |
 | 模块设置入口 | 在目标 App「设置选项」页最底部加入口；无 Root / LSPatch 场景模块未单独安装时，直接在目标 App 内弹出设置面板                                 |
 
-三个功能各有独立开关，默认全部开启。开关读取优先级：
+四个功能各有独立开关，默认全部开启。屏蔽系统字体是全局功能，其它三个作用于两个目标包。开关读取优先级：
 **系统属性 > 目标 App 内嵌面板 > 模块设置页 > 默认开启**。默认作用域（推荐列表）包含原版
 `com.flyersoft.moonreaderp` 与改包名的共存版 `com.flyersoft.moonreaderps`，两者互不干扰。
 
@@ -128,6 +129,7 @@ python build.py --release    # 正式版 -> out/MoonReaderInk-release.apk
 adb shell setprop persist.moonreader.ink.master 0       # 总开关，0 关 / 1 开
 adb shell setprop persist.moonreader.ink.link_hook 0    # 链接 Hook
 adb shell setprop persist.moonreader.ink.theme 0        # 墨水屏主题
+adb shell setprop persist.moonreader.ink.block_font 0    # 屏蔽系统字体（全局）
 adb shell setprop persist.moonreader.ink.master ""      # 清空，交还设置页
 ```
 
@@ -165,7 +167,8 @@ APK → 开始修补 → 安装修补后的 APK。
 AndroidManifest.xml        模块声明（包名 com.moonreader.ink、Xposed 元数据、推荐作用域）
 assets/xposed_init         Xposed 入口：com.moonreader.ink.Hook
 src/com/moonreader/ink/
-  Hook.java                入口、总开关、链接 Hook
+  Hook.java                入口、总开关、链接 Hook，先注册全局功能
+  GlobalFonts.java         全局功能：屏蔽系统字体（不受目标包名限制）
   EInkTheme.java           墨水屏主题的全部 Hook 与自绘 Drawable
   SettingsActivity.java    模块 APK 的设置页（MODULE_SETTINGS 入口，白底黑字墨水屏样式）
   SettingsUi.java          设置页与无 Root 内嵌面板共用的纯代码黑白 UI（开关 / 关于对话框）

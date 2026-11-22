@@ -97,6 +97,21 @@ public final class EInkTheme {
     private static volatile int SHELF_NAME_TV = 0x7f0903bd;
     // id/pvTopLine：选项页 ScrollView 的内容容器，模块设置入口挂在它末尾
     private static volatile int SETTINGS_ROOT = 0x7f0904e7;
+    // 阅读工具栏：上一章 / 进度条 / 百分比 / 下一章
+    private static volatile int PRIOR_B2 = 0x7f0904b7;
+    private static volatile int NEXT_B2 = 0x7f0903d3;
+    private static volatile int TXT_SEEK = 0x7f09069a;
+    private static volatile int TXT_PERCENT = 0x7f09069f;
+    // 文件列表日期 / 大小 / 类型（同一行 TextView，默认 #9e9e9e）
+    private static volatile int FILE_DATE_TV = 0x7f090249;
+    // 颜色选择器：预制色块与预览，必须保留原色（FFFFFF 不能被改成黑色）
+    private static final int[] COLOR_SWATCH_IDS = {
+            0x7f09012d, 0x7f090131, 0x7f090133,
+            0x7f090134, 0x7f090135, 0x7f090136,
+            0x7f090137, 0x7f090138, 0x7f090139,
+            0x7f0904b1, 0x7f09018c, 0x7f0904d7,
+            0x7f0904ce, 0x7f0904cf, 0x7f0906d1
+    };
     private static final String ENTRY_TAG = "moonreaderink_settings_entry";
 
     private static volatile long sLastScan = 0L;
@@ -203,6 +218,7 @@ public final class EInkTheme {
         // ---- 2. View / TextView / ImageView setter
         XC_MethodHook bgColorHook = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
+                if (isColorSwatch((View) p.thisObject)) return;
                 p.args[0] = bgColor((Integer) p.args[0]);
             }
         };
@@ -210,6 +226,7 @@ public final class EInkTheme {
 
         XC_MethodHook bgHook = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
+                if (isColorSwatch((View) p.thisObject)) return;
                 p.args[0] = bgDrawable((Drawable) p.args[0]);
             }
         };
@@ -218,6 +235,7 @@ public final class EInkTheme {
 
         XC_MethodHook bgTintHook = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
+                if (isColorSwatch((View) p.thisObject)) return;
                 try {
                     ColorStateList l = (ColorStateList) p.args[0];
                     if (l != null && isChromatic(l.getDefaultColor())) {
@@ -232,10 +250,17 @@ public final class EInkTheme {
         XC_MethodHook textHook = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try {
-                    if (p.thisObject instanceof TextView
-                            && isForceBlackLabel(((TextView) p.thisObject).getId())) {
-                        p.args[0] = BLACK;
-                        return;
+                    if (p.thisObject instanceof TextView) {
+                        TextView t = (TextView) p.thisObject;
+                        if (isForceBlackLabel(t.getId())
+                                || isForcedBlackText(t.getText())) {
+                            p.args[0] = BLACK;
+                            return;
+                        }
+                        if (isForcedBlackText((CharSequence) p.args[0])) {
+                            p.args[0] = blackText((CharSequence) p.args[0]);
+                            return;
+                        }
                     }
                 } catch (Throwable ignored) {}
                 p.args[0] = textColor((Integer) p.args[0]);
@@ -246,10 +271,13 @@ public final class EInkTheme {
         XC_MethodHook textCslHook = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try {
-                    if (p.thisObject instanceof TextView
-                            && isForceBlackLabel(((TextView) p.thisObject).getId())) {
-                        p.args[0] = ColorStateList.valueOf(BLACK);
-                        return;
+                    if (p.thisObject instanceof TextView) {
+                        TextView t = (TextView) p.thisObject;
+                        if (isForceBlackLabel(t.getId())
+                                || isForcedBlackText(t.getText())) {
+                            p.args[0] = ColorStateList.valueOf(BLACK);
+                            return;
+                        }
                     }
                     ColorStateList l = (ColorStateList) p.args[0];
                     if (l != null && isChromatic(l.getDefaultColor())) {
@@ -267,8 +295,11 @@ public final class EInkTheme {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try {
                     TextView t = (TextView) p.thisObject;
-                    if (isForceBlackLabel(t.getId()) || isDrawerBottomText(t.getText())) {
+                    if (isForceBlackLabel(t.getId()) || isDrawerBottomText(t.getText())
+                            || isForcedBlackText(t.getText())) {
                         t.getPaint().setColor(BLACK);
+                        // 绝不能在 onDraw 里 setText：会触发重新 measure/draw 并重入，
+                        // Span 每帧累积，最终卡死主线程（ANR）。文本只在 setText/scan 阶段改。
                         if (!sDrawerLogged) {
                             sDrawerLogged = true;
                             XposedBridge.log(TAG + ": drawer label black: "
@@ -282,7 +313,14 @@ public final class EInkTheme {
         XC_MethodHook iconTintHook = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try {
-                    if (p.thisObject instanceof View && isFab((View) p.thisObject)) return;
+                    if (p.thisObject instanceof View) {
+                        View v = (View) p.thisObject;
+                        if (isFab(v) || isColorSwatch(v)) return;
+                        if (v.getId() == PRIOR_B2 || v.getId() == NEXT_B2) {
+                            p.args[0] = ColorStateList.valueOf(BLACK);
+                            return;
+                        }
+                    }
                     ColorStateList l = (ColorStateList) p.args[0];
                     if (l != null) {
                         int c = l.getDefaultColor();
@@ -301,7 +339,14 @@ public final class EInkTheme {
         XC_MethodHook tintHook = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try {
-                    if (p.thisObject instanceof View && isFab((View) p.thisObject)) return;
+                    if (p.thisObject instanceof View) {
+                        View v = (View) p.thisObject;
+                        if (isFab(v) || isColorSwatch(v)) return;
+                        if (v.getId() == PRIOR_B2 || v.getId() == NEXT_B2) {
+                            p.args[0] = BLACK;
+                            return;
+                        }
+                    }
                     Object a = p.args[0];
                     if (a instanceof Integer && isChromatic((Integer) a)) p.args[0] = BLACK;
                 } catch (Throwable ignored) {}
@@ -316,7 +361,8 @@ public final class EInkTheme {
                 try {
                     if (p.thisObject instanceof ImageView) {
                         ImageView iv = (ImageView) p.thisObject;
-                        if (iv.getId() == FAB_ICON) return;
+                        if (iv.getId() == FAB_ICON || iv.getId() == PRIOR_B2
+                                || iv.getId() == NEXT_B2 || isColorSwatch(iv)) return;
                         fixImageView(iv);
                     } else if (p.thisObject instanceof TextView) {
                         for (Object a : p.args) {
@@ -384,6 +430,34 @@ public final class EInkTheme {
             }
         });
 
+        // NumberPicker 每次绘制前强制黑色分隔线 / 画笔（App 会重设 drawable）。
+        tryHook(cl, "com.example2014.components.NumberPicker", "onDraw",
+                Canvas.class, new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam p) {
+                        try {
+                            fixNumberPicker((View) p.thisObject);
+                        } catch (Throwable ignored) {}
+                    }
+                });
+
+        // ---- 3.5 主界面汉堡抽屉开关动画：强制 animate=false，瞬时开合。
+        // 只改 boolean 参数，不动 View / Drawable（手势拖动走 ViewDragHelper，不受影响）。
+        final XC_MethodHook drawerAnimHook = new XC_MethodHook() {
+            @Override protected void beforeHookedMethod(MethodHookParam p) {
+                try {
+                    if (p.args.length > 1 && p.args[1] instanceof Boolean) {
+                        p.args[1] = false;
+                    }
+                } catch (Throwable ignored) {}
+            }
+        };
+        for (String m : new String[]{"openDrawer", "closeDrawer"}) {
+            tryHook(cl, "androidx.drawerlayout.widget.DrawerLayout", m,
+                    View.class, boolean.class, drawerAnimHook);
+            tryHook(cl, "androidx.drawerlayout.widget.DrawerLayout", m,
+                    int.class, boolean.class, drawerAnimHook);
+        }
+
         // ---- 4. Activity 与 Dialog 都要扫 decor view
         hook(cl, "android.app.Activity", "onResume", new XC_MethodHook() {
             @Override protected void afterHookedMethod(final MethodHookParam p) {
@@ -438,7 +512,9 @@ public final class EInkTheme {
                     final View cv = ((android.widget.PopupWindow) p.thisObject).getContentView();
                     if (cv == null) return;
                     cv.postDelayed(new Runnable() {
-                        @Override public void run() { scan(cv.getRootView()); }
+                        @Override public void run() {
+                            scan(cv.getRootView());
+                        }
                     }, 120);
                 } catch (Throwable ignored) {}
             }
@@ -492,6 +568,11 @@ public final class EInkTheme {
                 DRAWER_EXIT_TV = lookup(res, "exitTv", "id", DRAWER_EXIT_TV);
                 BOOK_NAME_TV = lookup(res, "fileName", "id", BOOK_NAME_TV);
                 SHELF_NAME_TV = lookup(res, "myBookName", "id", SHELF_NAME_TV);
+                PRIOR_B2 = lookup(res, "priorB2", "id", PRIOR_B2);
+                NEXT_B2 = lookup(res, "nextB2", "id", NEXT_B2);
+                TXT_SEEK = lookup(res, "txtSeekBar01", "id", TXT_SEEK);
+                TXT_PERCENT = lookup(res, "txtTextViewPercent", "id", TXT_PERCENT);
+                FILE_DATE_TV = lookup(res, "fileDate", "id", FILE_DATE_TV);
                 FOLDER_ICON = lookup(res, "iconfolder", "drawable", FOLDER_ICON);
                 CB_CHECK_ANIM = lookup(res, "abc_btn_check_material_anim",
                         "drawable", CB_CHECK_ANIM);
@@ -530,6 +611,21 @@ public final class EInkTheme {
             return;
         }
         if (id == FAB_ICON) { fixFabIcon(v); return; }
+        if (isColorSwatch(v)) return; // 调色板 / 颜色预览：保留真实颜色
+        if (id == PRIOR_B2 || id == NEXT_B2) { fixReaderArrow(v); return; }
+        if (id == TXT_SEEK) { fixReaderSeekBar(v); return; }
+        if (id == TXT_PERCENT && v instanceof TextView) {
+            ((TextView) v).setTextColor(BLACK);
+        }
+        if (isNumberPickerClass(v)) fixNumberPicker(v);
+        // 可视选项里的卡片容器（包含 NumberPicker / 颜色预览）强制纯白底 + 黑边。
+        if (v instanceof ViewGroup && containsNumberPicker((ViewGroup) v)) {
+            Drawable bg = v.getBackground();
+            if (bg instanceof GradientDrawable) {
+                ((GradientDrawable) bg).setColor(WHITE);
+                ((GradientDrawable) bg).setStroke(2, BLACK);
+            }
+        }
         try {
             if (id == DRAWER_BOTTOM) blackenDrawerLabels(v);
             if (id == SETTINGS_ROOT && v instanceof ViewGroup) {
@@ -549,7 +645,10 @@ public final class EInkTheme {
                 int c = t.getCurrentTextColor();
                 int n = textColor(c);
                 if (n != c) t.setTextColor(n);
-                if (isForceBlackLabel(id)) t.setTextColor(BLACK);
+                if (isForceBlackLabel(id) || isForcedBlackText(t.getText())) {
+                    t.setTextColor(BLACK);
+                    blackenForegroundSpans(t);
+                }
                 for (Drawable d : t.getCompoundDrawables()) tintBlack(d);
                 for (Drawable d : t.getCompoundDrawablesRelative()) tintBlack(d);
                 // 面包屑里的小三角 / 箭头（短文本、浅灰）改成纯黑
@@ -689,6 +788,173 @@ public final class EInkTheme {
 
         @Override public int getIntrinsicWidth() { return w; }
         @Override public int getIntrinsicHeight() { return h; }
+    }
+
+    /** 复制文本并把灰色 ForegroundColorSpan 改成黑色（span 会覆盖 setTextColor）。 */
+    private static CharSequence blackText(CharSequence cs) {
+        try {
+            if (!(cs instanceof android.text.Spanned)) return cs;
+            android.text.Spanned sp = (android.text.Spanned) cs;
+            android.text.style.ForegroundColorSpan[] grays = sp.getSpans(
+                    0, cs.length(), android.text.style.ForegroundColorSpan.class);
+            // 没有 ForegroundColorSpan 就不复制、不 setText，避免无谓的对象分配，
+            // 更重要的是避免对「上一次已改黑」的文本反复 setText 造成重入。
+            boolean need = false;
+            for (android.text.style.ForegroundColorSpan f : grays) {
+                if (f.getForegroundColor() != BLACK) { need = true; break; }
+            }
+            if (!need) return cs;
+            android.text.SpannableString out = new android.text.SpannableString(cs);
+            Object[] spans = sp.getSpans(0, cs.length(), Object.class);
+            for (Object s : spans) {
+                int start = sp.getSpanStart(s), end = sp.getSpanEnd(s);
+                int flags = sp.getSpanFlags(s);
+                if (s instanceof android.text.style.ForegroundColorSpan
+                        && ((android.text.style.ForegroundColorSpan) s).getForegroundColor() != BLACK) {
+                    out.setSpan(new android.text.style.ForegroundColorSpan(BLACK),
+                            start, end, flags);
+                } else {
+                    out.setSpan(s, start, end, flags);
+                }
+            }
+            return out;
+        } catch (Throwable ignored) {
+            return cs;
+        }
+    }
+
+    /** 把已有 TextView 的 Span 改成黑色（用于扫描到的存量文本）。 */
+    private static final int TAG_BLACKENED = 0x7f0000a1; // 仅作 View.setTag 的 key
+
+    private static void blackenForegroundSpans(TextView t) {
+        try {
+            CharSequence cs = t.getText();
+            if (cs == null) return;
+            CharSequence fixed = blackText(cs);
+            if (fixed == cs) return;
+            // 同一段文本已改过就不再 setText：setTag 随 View 回收，不会跨列表项残留。
+            if (fixed.equals(t.getTag(TAG_BLACKENED))) return;
+            t.setTag(TAG_BLACKENED, fixed.toString());
+            t.setText(fixed);
+        } catch (Throwable ignored) {}
+    }
+
+    private static boolean isNumberPickerClass(View v) {
+        return v != null && v.getClass().getName().contains("NumberPicker");
+    }
+
+    private static boolean containsNumberPicker(ViewGroup g) {
+        try {
+            for (int i = 0; i < g.getChildCount(); i++) {
+                View c = g.getChildAt(i);
+                if (isNumberPickerClass(c)) return true;
+                if (c instanceof ViewGroup && containsNumberPicker((ViewGroup) c)) return true;
+            }
+        } catch (Throwable ignored) {}
+        return false;
+    }
+
+    /** 可视选项的 NumberPicker：蓝色分隔线与数字文字改纯黑。 */
+    private static void fixNumberPicker(View v) {
+        try {
+            Class<?> c = v.getClass();
+            while (c != null) {
+                for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                    String name = f.getName().toLowerCase();
+                    if (name.contains("divider")
+                            && Drawable.class.isAssignableFrom(f.getType())) {
+                        f.setAccessible(true);
+                        Drawable d = (Drawable) f.get(v);
+                        if (d != null) {
+                            ColorDrawable black = new ColorDrawable(BLACK);
+                            black.setBounds(d.getBounds());
+                            f.set(v, black);
+                        }
+                    } else if (name.contains("paint")
+                            && android.graphics.Paint.class.isAssignableFrom(f.getType())) {
+                        f.setAccessible(true);
+                        android.graphics.Paint p = (android.graphics.Paint) f.get(v);
+                        if (p != null) p.setColor(BLACK);
+                    }
+                }
+                c = c.getSuperclass();
+            }
+        } catch (Throwable ignored) {}
+        if (v instanceof TextView) ((TextView) v).setTextColor(BLACK);
+    }
+
+    /** 阅读工具栏上一章 / 下一章：自绘纯黑箭头（App 的 tint 会一直覆盖 colorFilter）。 */
+    private static void fixReaderArrow(View v) {
+        if (!(v instanceof ImageView)) return;
+        ImageView iv = (ImageView) v;
+        if (iv.getDrawable() instanceof ReaderArrowDrawable) return;
+        int p = dp(iv.getResources(), 3);
+        iv.setPadding(p, p, p, p);
+        ViewGroup.LayoutParams lp = iv.getLayoutParams();
+        if (lp != null) {
+            lp.width = dp(iv.getResources(), 42);
+            lp.height = dp(iv.getResources(), 42);
+            iv.setLayoutParams(lp);
+        }
+        iv.setColorFilter(null);
+        iv.setImageTintList(null);
+        iv.setImageDrawable(new ReaderArrowDrawable(v.getId() == NEXT_B2));
+    }
+
+    /** 纯黑粗 chevron，bounds 由 ImageView 提供。 */
+    private static final class ReaderArrowDrawable extends Drawable {
+        private final boolean right;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        ReaderArrowDrawable(boolean right) {
+            this.right = right;
+            paint.setColor(BLACK);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setStrokeJoin(Paint.Join.ROUND);
+        }
+
+        @Override public void draw(Canvas c) {
+            Rect r = getBounds();
+            float w = r.width(), h = r.height();
+            paint.setStrokeWidth(Math.max(4f, w * 0.11f));
+            android.graphics.Path path = new android.graphics.Path();
+            if (right) {
+                path.moveTo(r.left + w * 0.35f, r.top + h * 0.22f);
+                path.lineTo(r.left + w * 0.68f, r.centerY());
+                path.lineTo(r.left + w * 0.35f, r.bottom - h * 0.22f);
+            } else {
+                path.moveTo(r.left + w * 0.65f, r.top + h * 0.22f);
+                path.lineTo(r.left + w * 0.32f, r.centerY());
+                path.lineTo(r.left + w * 0.65f, r.bottom - h * 0.22f);
+            }
+            c.drawPath(path, paint);
+        }
+
+        @Override public void setAlpha(int a) {}
+        @Override public void setColorFilter(ColorFilter cf) {}
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+    }
+
+    /** 阅读进度条：轨道球改白底空心圆 + 黑色描边。 */
+    private static void fixReaderSeekBar(View v) {
+        if (!(v instanceof android.widget.SeekBar)) return;
+        android.widget.SeekBar sb = (android.widget.SeekBar) v;
+        if (sb.getThumb() instanceof EinkThumb) return;
+        try {
+            int size = dp(v.getResources(), 18);
+            EinkThumb g = new EinkThumb();
+            g.setSize(size, size);
+            sb.setThumb(g);
+        } catch (Throwable ignored) {}
+    }
+
+    private static final class EinkThumb extends GradientDrawable {
+        EinkThumb() {
+            setShape(GradientDrawable.OVAL);
+            setColor(WHITE);
+            setStroke(2, BLACK);
+        }
     }
 
     private static void fixFabIcon(View v) {
@@ -852,7 +1118,17 @@ public final class EInkTheme {
         if (!(v instanceof android.widget.CheckedTextView)) return;
         try {
             android.widget.CheckedTextView t = (android.widget.CheckedTextView) v;
-            Drawable old = t.getCheckMarkDrawable();
+            // AlertDialog 多选列表：AppCompat 在 checkMark 之外又给 TextView 设了
+            // 左侧 compound drawable（系统 checkbox 旧框，带灰影），而新样式已由
+            // checkMark 绘制。清掉左图标，避免同一行出现两个复选框。
+            Drawable chk = t.getCheckMarkDrawable();
+            if (chk != null) {
+                Drawable[] cd = t.getCompoundDrawables();
+                if (cd[0] != null) t.setCompoundDrawables(null, cd[1], cd[2], cd[3]);
+                Drawable[] cr = t.getCompoundDrawablesRelative();
+                if (cr[0] != null) t.setCompoundDrawablesRelative(null, cr[1], cr[2], cr[3]);
+            }
+            Drawable old = chk;
             if (!(old instanceof CheckBoxDrawable)
                     || ((CheckBoxDrawable) old).checked != t.isChecked()) {
                 t.setCheckMarkDrawable(new CheckBoxDrawable(t.isChecked()));
@@ -879,8 +1155,11 @@ public final class EInkTheme {
         XposedBridge.log(TAG + ": " + kind + " fixed -> " + detail);
     }
 
+    /** 带标记：用于识别「资源返回处替换」出来的复选框，清掉重复的 compound drawable。 */
+    private static final class CheckBoxStatesDrawable extends StateListDrawable {}
+
     private static Drawable checkBoxStates() {
-        StateListDrawable s = new StateListDrawable();
+        CheckBoxStatesDrawable s = new CheckBoxStatesDrawable();
         s.addState(new int[]{android.R.attr.state_checked}, new CheckBoxDrawable(true));
         s.addState(new int[]{}, new CheckBoxDrawable(false));
         return s;
@@ -938,7 +1217,19 @@ public final class EInkTheme {
 
     /** 一律强制纯黑的文字：抽屉底部四个标签 + 书架/文件列表的书名。 */
     private static boolean isForceBlackLabel(int id) {
-        return isDrawerBottomLabel(id) || id == BOOK_NAME_TV || id == SHELF_NAME_TV;
+        return isDrawerBottomLabel(id) || id == BOOK_NAME_TV || id == SHELF_NAME_TV
+                || id == FILE_DATE_TV || id == TXT_PERCENT;
+    }
+
+    /** 颜色选择器里的色块必须保留原色，否则 FFFFFF 会被改成黑、调色板全黑。 */
+    private static boolean isColorSwatch(View v) {
+        if (v == null) return false;
+        int id = v.getId();
+        for (int i = 0; i < COLOR_SWATCH_IDS.length; i++) {
+            if (id == COLOR_SWATCH_IDS[i]) return true;
+        }
+        String n = v.getClass().getName();
+        return n.contains("ColorPickerView") || n.contains("ColorTemplate");
     }
 
     private static boolean isDrawerBottomLabel(int id) {
@@ -951,6 +1242,20 @@ public final class EInkTheme {
         String s = cs.toString().trim();
         return s.equals("设置选项") || s.equals("软件说明")
                 || s.equals("晚上模式") || s.equals("退出");
+    }
+
+    /**
+     * 文件列表路径下拉里的辅助文字：App 用 #9e9e9e 灰色，墨水屏上太淡。
+     * 「(剩余: ... 全部: ...)」「+(选项)」与快速访问列表里的绝对路径都要压黑。
+     */
+    private static boolean isForcedBlackText(CharSequence cs) {
+        if (cs == null) return false;
+        String s = cs.toString().trim();
+        if (s.startsWith("/storage/") || s.startsWith("/sdcard/")) return true;
+        if (s.startsWith("ExtSdCard")) return true;
+        return s.contains("剩余") || s.contains("全部:") || s.contains("全部：")
+                || (s.startsWith("+") && s.contains("选项"))
+                || s.equals("(选项)") || s.equals("选项");
     }
 
     /** 抽屉底部「设置选项 / 软件说明 / 晚上模式 / 退出」等文字改成纯黑。 */
@@ -1127,7 +1432,15 @@ public final class EInkTheme {
 
     private static boolean looksLikeBlueBadge(Bitmap b) {
         int w = b.getWidth(), h = b.getHeight();
-        if (w <= 0 || h <= 0 || w > 400 || h > 400) return false;
+        if (w <= 0 || h <= 0 || w > 200 || h > 200) return false;
+        if (Math.abs(w - h) > Math.min(w, h) / 6) return false;
+        // 真实书籍封面四角不透明，默认 EPUB 徽标是圆形、四角透明；
+        // 这一条能避免「带图的封面被反色 / 白底黑字化」。
+        int corner = 2;
+        if (Color.alpha(b.getPixel(corner, corner)) > 40
+                || Color.alpha(b.getPixel(w - 1 - corner, corner)) > 40
+                || Color.alpha(b.getPixel(corner, h - 1 - corner)) > 40
+                || Color.alpha(b.getPixel(w - 1 - corner, h - 1 - corner)) > 40) return false;
         int step = Math.max(1, Math.min(w, h) / 20);
         int blue = 0, light = 0, total = 0;
         for (int y = 0; y < h; y += step) {

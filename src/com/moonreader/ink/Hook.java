@@ -50,6 +50,15 @@ public class Hook implements IXposedHookLoadPackage {
     @Override
     public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
         final String pkg = lpparam.packageName;
+
+        // 全局功能（屏蔽系统字体）先注册：不限制目标包，只要进程里有
+        // com.flyersoft.tools.A#getLocalFontfaces 就生效；有独立开关。
+        try {
+            GlobalFonts.tryInstall(lpparam.classLoader, pkg);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": global fonts failed (" + pkg + "): " + t);
+        }
+
         if (!TARGET_MAIN.equals(pkg) && !TARGET_COEXIST.equals(pkg)) return;
 
         if (!featureEnabled(PROP_MASTER, KEY_MASTER, pkg)) {
